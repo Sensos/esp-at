@@ -121,6 +121,10 @@ else()
     message("no extra component dirs")
 endif()
 
+# Override partition table settings to ensure partitions_at.csv is used
+set(CONFIG_PARTITION_TABLE_CUSTOM ON)
+set(CONFIG_PARTITION_TABLE_FILENAME "module_config/module_esp32c2_default/partitions_at.csv")
+set(CONFIG_PARTITION_TABLE_BASE_DIR "${CMAKE_SOURCE_DIR}")
 include(${IDF_PATH}/tools/cmake/project.cmake)
 
 project(esp-at)
