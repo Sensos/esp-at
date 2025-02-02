@@ -9,10 +9,15 @@
 #include "esp_at.h"
 #include "esp_http_client.h"
 #include "esp_vfs_fat.h"
+#include "esp_system.h"
+#include "esp_wifi.h"
+#include "esp_log.h"
 
 #define MAX_URL_LENGTH 512
 #define MAX_FILE_PATH_LENGTH 256
 #define DOWNLOAD_BUFFER_SIZE 4096
+
+static const char *TAG = "HTTP_DOWNLOAD";
 
 typedef struct {
     FILE* file;
@@ -33,14 +38,17 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
                     return ESP_FAIL;
                 }
                 context->downloaded_bytes += bytes_written;
+                ESP_LOGI(TAG, "Downloaded %d bytes so far", context->downloaded_bytes);
             }
             break;
 
         case HTTP_EVENT_ERROR:
+            ESP_LOGE(TAG, "HTTP event error occurred");
             context->error_code = ESP_FAIL;
             break;
 
         case HTTP_EVENT_ON_FINISH:
+            ESP_LOGI(TAG, "HTTP download finished successfully");
             context->download_complete = true;
             break;
 
@@ -50,8 +58,17 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
-static uint8_t at_httpdownload_setup_cmd(uint8_t para_num)
-{
+static uint8_t at_httpdownload_setup_cmd(uint8_t para_num) {
+    ESP_LOGI(TAG, "Heap before download: %d bytes", esp_get_free_heap_size());
+
+    // Check WiFi signal strength
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        ESP_LOGI(TAG, "WiFi RSSI: %d dBm", ap_info.rssi);
+    } else {
+        ESP_LOGW(TAG, "Failed to get WiFi RSSI");
+    }
+
     // Validate parameter count (2 parameters: URL and file path)
     if (para_num != 2) {
         esp_at_port_write_data((uint8_t *)"ERROR: Incorrect number of parameters\r\n", 39);
@@ -94,10 +111,13 @@ static uint8_t at_httpdownload_setup_cmd(uint8_t para_num)
 
     // HTTP client configuration
     esp_http_client_config_t config = {
-            .url = (char *)url,
-            .event_handler = http_event_handler,
-            .user_data = &context
+        .url = (char *)url,
+        .event_handler = http_event_handler,
+        .user_data = &context,
+        .timeout_ms = 20000 // Increased timeout
     };
+
+    ESP_LOGI(TAG, "Starting HTTP download from: %s", url);
 
     // Perform download
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -106,13 +126,18 @@ static uint8_t at_httpdownload_setup_cmd(uint8_t para_num)
     // Close file
     fclose(context.file);
 
+    ESP_LOGI(TAG, "Heap after download: %d bytes", esp_get_free_heap_size());
+
     // Handle download result
     if (err != ESP_OK || !context.download_complete) {
         unlink((char *)file_path);  // Remove partially downloaded file
         esp_at_port_write_data((uint8_t *)"ERROR: Download failed\r\n", 24);
+        ESP_LOGE(TAG, "Download failed with error: %s", esp_err_to_name(err));
         esp_http_client_cleanup(client);
         return ESP_AT_RESULT_CODE_ERROR;
     }
+
+    ESP_LOGI(TAG, "Download completed: %d bytes received", context.downloaded_bytes);
 
     // Cleanup
     esp_http_client_cleanup(client);
@@ -127,8 +152,7 @@ static uint8_t at_httpdownload_setup_cmd(uint8_t para_num)
     return ESP_AT_RESULT_CODE_OK;
 }
 
-static uint8_t at_httpdownload_test_cmd(uint8_t *cmd_name)
-{
+static uint8_t at_httpdownload_test_cmd(uint8_t *cmd_name) {
     uint8_t buffer[128] = {0};
     snprintf((char *)buffer, sizeof(buffer),
              "HTTPDOWNLOAD command: AT+HTTPDOWNLOAD=<url>,<file_path>\r\n"
@@ -138,11 +162,10 @@ static uint8_t at_httpdownload_test_cmd(uint8_t *cmd_name)
 }
 
 static const esp_at_cmd_struct at_custom_cmd[] = {
-        {"+HTTPDOWNLOAD", at_httpdownload_test_cmd, NULL, at_httpdownload_setup_cmd, NULL},
+    {"+HTTPDOWNLOAD", at_httpdownload_test_cmd, NULL, at_httpdownload_setup_cmd, NULL},
 };
 
-bool esp_at_custom_cmd_register(void)
-{
+bool esp_at_custom_cmd_register(void) {
     return esp_at_custom_cmd_array_regist(at_custom_cmd, sizeof(at_custom_cmd) / sizeof(esp_at_cmd_struct));
 }
 
