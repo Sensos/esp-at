@@ -347,17 +347,21 @@ static uint8_t at_setup_cmd_httpget_to_fs(uint8_t para_num)
     esp_http_client_fetch_headers(sp_http_to_fs->client);
     int status_code = esp_http_client_get_status_code(sp_http_to_fs->client);
     if (status_code >= HttpStatus_BadRequest) {
-        ESP_LOGE(TAG, "recv http status code: %d", status_code);
+        printf("recv http status code: %d\n", status_code);
         ret = ESP_FAIL;
         goto cmd_exit;
     }
     if (sp_http_to_fs->fs_handle->available_size < sp_http_to_fs->total_size) {
-        ESP_LOGE(TAG, "fatfs available size:%u, but res total size:%d", sp_http_to_fs->fs_handle->available_size, sp_http_to_fs->total_size);
+        printf("fatfs available size:%u, but res total size:%d\n", sp_http_to_fs->fs_handle->available_size, sp_http_to_fs->total_size);
         ret = ESP_FAIL;
         goto cmd_exit;
     }
 
-    prepare_file(sp_http_to_fs->fs_handle->fp, sp_http_to_fs->total_size);
+    if (prepare_file(sp_http_to_fs->fs_handle->fp, sp_http_to_fs->total_size) != 0) {
+        printf("prepare file failed\n");
+        ret = ESP_FAIL;
+        goto cmd_exit;
+    }
 
     // Start download time measurement
     start_download_time = esp_timer_get_time();
@@ -380,16 +384,16 @@ static uint8_t at_setup_cmd_httpget_to_fs(uint8_t para_num)
             }
             // End write time measurement
             end_write_time = esp_timer_get_time();
-            printf("Time to write %d bytes: %ld ms\r\n", data_len, (int32_t )((end_write_time - start_write_time)/1000));
+            printf("Time to write %d bytes: %ld ms\n", data_len, (int32_t )((end_write_time - start_write_time)/1000));
 
             if (ret != ESP_OK) {
                 break;
             }
         } else if (data_len < 0) {
-            ESP_LOGE(TAG, "Connection aborted!");
+            printf("Connection aborted!\n");
             break;
         } else {
-            printf("Connection closed\r\n");
+            printf("Connection closed\n");
             ret = ESP_OK;
             break;
         }
@@ -399,18 +403,22 @@ static uint8_t at_setup_cmd_httpget_to_fs(uint8_t para_num)
     // End download time measurement
     end_download_time = esp_timer_get_time();
     int64_t total_download_time = end_download_time - start_download_time;
-    printf("Total download time: %ld ms\r\n", (int32_t )(total_download_time/1000));
+    printf("Total download time: %ld ms\n", (int32_t )(total_download_time/1000));
 
     if (sp_http_to_fs->is_chunked) {
-        printf("total received len:%d, total wrote size:%d\r\n", sp_http_to_fs->recv_size, sp_http_to_fs->fs_handle->wrote_size);
+        printf("total received len:%d, total wrote size:%d\n", sp_http_to_fs->recv_size, sp_http_to_fs->fs_handle->wrote_size);
     } else {
         if (sp_http_to_fs->total_size != sp_http_to_fs->fs_handle->wrote_size) {
-            ESP_LOGE(TAG, "total expected len:%d, but total wrote size:%d", sp_http_to_fs->total_size, sp_http_to_fs->fs_handle->wrote_size);
+            printf("total expected len:%d, but total wrote size:%d\n", sp_http_to_fs->total_size, sp_http_to_fs->fs_handle->wrote_size);
             ret = ESP_FAIL;
         } else {
-            printf("total wrote size matches expected size:%d\r\n", sp_http_to_fs->fs_handle->wrote_size);
+            printf("total wrote size matches expected size:%d\n", sp_http_to_fs->fs_handle->wrote_size);
         }
     }
+
+    // Calculate and print download speed
+    double download_speed = (sp_http_to_fs->recv_size * 1.0) / (total_download_time / 1000000.0); // bytes per second
+    printf("Download speed: %.2f bytes/second\n", download_speed);
 
     // Calculate and print download speed
     double download_speed = (sp_http_to_fs->recv_size * 1.0) / (total_download_time / 1000000.0); // bytes per second
@@ -420,12 +428,23 @@ static uint8_t at_setup_cmd_httpget_to_fs(uint8_t para_num)
     // clean resources
     at_http_to_fs_clean();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "command ret: 0x%x", ret);
+        printf("command ret: 0x%x\n", ret);
         return ESP_AT_RESULT_CODE_ERROR;
     }
 
     return ESP_AT_RESULT_CODE_OK;
 }
+
+#if 0
+static uint8_t at_cmd_httpget_to_fs_test_cmd(uint8_t *cmd_name)
+{
+    uint8_t buffer[128] = {0};
+    snprintf((char *)buffer, sizeof(buffer),
+             "AT+HTTPGET_TO_FS=<\"dst_path\">,<url_len>,<http_buffer_size>,<file_write_buffer_size>\r\n");
+    esp_at_port_write_data(buffer, strlen((char *)buffer));
+    return ESP_AT_RESULT_CODE_OK;
+}
+#endif
 
 #if 0
 static uint8_t at_cmd_httpget_to_fs_test_cmd(uint8_t *cmd_name)
